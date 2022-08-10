@@ -1,0 +1,856 @@
+---
+title: "Employees Turnover"
+output: html_notebook
+---
+
+
+
+The goal of this notebook is to predict an Employee's risk of quitting (with a Survival Analysis Model). First, I clean and explore the dataset to prepare it for analyses. After reviewing the statistical organization's and performance characteristics through EDA and feature engineering techniques, I generate models that predict employee turnover. The first regression model takes a large set of predictors while the second model includes only ...
+
+This notebook predict the Turnover Employee's, using the workflow bellow:
+
+    1) Data Import and Clean Data (Turnover.csv)
+    2) EDA
+    3) Feature Engineering
+    4) Significance Testing
+    5) Logistic Regression Modeling and Validation
+    
+
+For this notebook, we are using the Turnover.csv file that contains, the following columns:
+
+      •	stag - Experience (time)
+      •	event - Employee turnover
+      •	gender - Employee's gender, female(f), or male(m)
+      •	age - Employee's age (year)
+      •	industry - Employee's Industry
+      •	profession - Employee's profession
+      • traffic - From what pipelene employee came to the company. 
+      •	coach - Presence of a coach (training) on probation
+      •	head_gender - head (supervisor) gender
+      •	greywage - The salary does not seem to the tax authorities. Greywage in Russia or Ukraine means that the employer (company) pay
+      •	way - Employee's way of transportation
+      •	extraversion - Extraversion score
+      •	independ - Independend score
+      •	selfcontrol - Selfcontrol score
+      •	anxiety - Anxiety score
+      •	novator - Novator score
+
+
+#Libraries/Dependencies:
+```{r}
+install.packages("nlme")
+```
+
+```{r}
+suppressMessages(library(mgcv))
+suppressMessages(library(tidyverse))
+suppressMessages(library(lubridate))
+suppressMessages(library(broom))
+suppressMessages(library(survival))
+suppressMessages(library(survminer))
+suppressMessages(library(lubridate))
+suppressMessages(library(dplyr)) # Data Manipulation
+suppressMessages(library(ggplot2)) # Visualization
+suppressMessages(library(corrplot))
+suppressMessages(library(RColorBrewer))
+suppressMessages(library(caTools)) # Prediction: Splitting Data
+library(car) # Prediction: Checking Multicollinearity
+library(ROCR) # Prediction: ROC Curve
+library(e1071) # Prediction: SVM, Naive Bayes, Parameter Tuning
+library(rpart) # Prediction: Decision Tree
+library(rpart.plot) # Prediction: Decision Tree
+```
+
+
+
+
+#Read data
+```{r}
+data <- read.csv('turnover.csv', header = TRUE, sep = ',')
+head(data, 10)
+```
+###EXPLORATORY Data Analysis:
+```{r}
+str(data)
+```
+#Data dimension+Columns names+Summary:
+```{r}
+dim(data)
+colnames(data)     #dimension of 1129 rows and 16 columns 
+summary(data)
+```
+
+
+#Variables check---------------------------------------
+#Continuous variables (event= (Turnover or active),stag(time to turnover),Age, Independence, extraversion, selfcontrol, Anxiety, Novator)
+```{r}
+#Distribution Plot:
+par(mfrow=c(1,3))
+hist(data$event, col="green")
+hist(data$stag, col="red")
+hist(data$age, col="blue")
+hist(data$anxiety, col="yellow")
+hist(data$extraversion, col="green")
+hist(data$selfcontrol, col="pink")
+hist(data$independ, col="blue")
+hist(data$novator, col="red")
+```
+
+#Discret variables (Gender, Manager gender, Coach, greywage, traffic, Profession, Transport,Industry)
+```{r}
+#Gender
+barplot(table(data$gender), ylab="Count",xlab="gender distribution", col=c(2,8), names.arg=c("f", "m"))
+
+# Manager Gender
+barplot(table(data$head_gender), ylab="Count",xlab="Manager gender distribution", col=c(1,6), names.arg=c("f", "m"))
+
+
+# Coach
+barplot(table(data$coach), ylab="Count",xlab="Coach distribution", col=c(0,8,5), names.arg=c("No coach", "My head", "Yes"))
+
+#Greywage:
+barplot(table(data$greywage), ylab="Count",xlab="Greywage", col=c(2,7), names.arg=c("Grey", "White"))
+
+#Traffic:
+data |>
+  group_by(traffic) |>
+  summarize(turnover_rate = mean(event), .groups = 'drop') |>
+  ggplot(aes(traffic, turnover_rate))  + 
+  geom_bar(stat = "identity", aes(fill = traffic)) + 
+  theme(axis.title.x = element_blank()) + ylab("Turnover Rate") + 
+  theme(legend.position = "none") + scale_fill_brewer(palette = "Paired") + 
+  ggtitle("Turnover Rate by traffic") + 
+  theme(text = element_text(size = 15))
+
+#Profession
+
+data$profession<-str_replace_all(data$profession,"<f1>", "c") #Replace error data:
+
+Table_profession<-table(data$profession,data$event)
+data_table_profession<-as.data.frame(Table_profession)
+Table_profession<-subset(data_table_profession,Var2==1)
+print(Table_profession)
+
+
+Table_profession$Var1 <- factor(Table_profession$Var1, levels =Table_profession$Var1[order(-Table_profession$Freq)])
+
+Plot_profession<-ggplot(Table_profession, aes(x=Var1,y=Freq,fill=Var1)) +
+ geom_bar(stat='identity') +theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+print(Plot_profession)
+
+
+
+#Industry VS Turnover 
+
+Table_industry<-table(data$industry,data$event)
+data_table_industry<-as.data.frame(Table_industry)
+Table_industry<-subset(data_table_industry,Var2==1)
+print(Table_industry)
+
+
+Table_industry$Var1 <- factor(Table_industry$Var1, levels =Table_industry$Var1[order(-Table_industry$Freq)])
+plot_industry<-ggplot(Table_industry, aes(x=Var1,y=Freq,fill=Var1)) +
+ geom_bar(stat='identity') +theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+print(plot_industry)
+
+
+
+# Transport (way)
+data |>
+  group_by(way) |>
+  summarize(turnover_rate = mean(event), .groups = 'drop') |>
+  ggplot(aes(way, turnover_rate))  + 
+  geom_bar(stat = "identity", aes(fill = way)) + 
+  theme(axis.title.x = element_blank()) + ylab("Turnover Rate") + 
+  theme(legend.position = "none") + scale_fill_brewer(palette = "Paired") + 
+  ggtitle("Turnover Rate by way") + 
+  theme(text = element_text(size = 15))
+```
+see link for salary greywage : https://blogs.elenasmodels.com/ukraine-white-black-grey-wages/
+Grey wage = Employees are paid cash partially, in addition to the official wage (“grey” wages”).
+White Wage: employees receive “white” (fully official) wages.
+
+#Explanatory of Employee's Turnover VS active employee's:
+```{r}
+#Remove columns not needed:
+Data_filter <- data |>
+  select(-c("greywage","head_gender","profession","industry","traffic","coach","way","extraversion","independ","selfcontrol","anxiety","novator"))
+
+#Convert data columns that can be converted
+Cols <-c("event","stag","gender","age")
+Data_filter[Cols] <- lapply(Data_filter[Cols], factor)
+
+#Total employees Turnover VS Active:
+options(repr.plot.width = 4, repr.plot.height = 4)
+Data_filter %>%
+  group_by(event) %>%
+  ggplot(aes(factor(event))) + geom_bar(aes(fill = event)) + 
+  scale_x_discrete(labels = c("active","Turnover" )) + 
+  theme(axis.title.x = element_blank()) + ylab("Employee Turnover") + 
+  theme(legend.position = "none") + 
+  geom_text(stat = "count", aes(label = ..count..), vjust = -.5) + 
+  theme(text = element_text(size = 10)) + 
+  ggtitle("Total turnover VS active Employees ") + 
+  scale_fill_brewer(palette = "Paired")
+```
+The graph above shows status employee's (Turnover or No).
+
+The  graph indicates that there are 558 active employees and 571 inactive employees (Turnover done) in the dataset (n = 1129). The data on inactive employees will be used in the machine learning portions of this notebook as predictions of turnover employee's.
+
+#Correlation Table (Numeric features)
+```{r}
+Correlation<-data[,c("stag","event","age","anxiety","extraversion","novator","selfcontrol","independ")]
+
+cor(Correlation)
+```
+#We do not see a good correlation between those features.
+
+
+#Distribution on time: 
+```{r}
+data %>%
+    mutate(Turnover_type = factor(ifelse(event == 1, "Turnover", "Active"))) %>%
+    select(Turnover_type, stag) %>%
+    ggplot(aes(x = stag, colour = Turnover_type)) + 
+    geom_density() + 
+    ggtitle("Turnover vs Active")
+```
+Looking at the graph above we can tell that experience (stag) has a very weak correlation with employee quitting so we can tell that experience (time) is not a major factor on employee resigning
+
+
+
+
+Kaplan-Meier test is used in our case to calculate the  probability to stay in a compagny with different parameters.
+#GENERAL Kaplan Maier without covariates:
+
+```{r}
+
+fit_KM <- survfit(Surv(stag,event) ~ 1, data = data)
+summary(fit_KM)
+fit_KM
+plot(fit_KM, mark.time = TRUE,
+     main = "Kaplan-Meier estimator",
+     ylab = "Turnover  probability",
+     xlab = "time (Months)")
+
+```
+Let's focus on each parameter (Covariates):
+1- AGE: we decide to create 4 groups less than 30 for Young, less than 40 for middle age, Less than 50 for Old Age and more than 50
+```{r}
+#Age parameter/KM:
+data$AgeGroup <- ifelse(data$age<30 , "Young employee",
+                        ifelse(data$age<40, "Middle Age",
+                              ifelse(data$age<50, "Old ages", "others")
+                              )
+                        )
+
+fit_KM_GroupAGE<- survfit(Surv(stag, event) ~ AgeGroup, data = data)
+summary(fit_KM_GroupAGE)
+plot(fit_KM_GroupAGE,col = 1:4, mark.time = TRUE,
+     main = "Kaplan-Meier estimator for age group",
+     ylab = "Turnover probability",
+     xlab = "time (Months)")
+legend("bottomleft", col = 1:4, lty = 1, legend = c("Middle aged [30Yo,40Yo[", "Old [40Yo,50Yo[", "Young Adult <30Yo" ,"elderly >=50Yo"))
+survdiff(Surv(stag, event) ~ AgeGroup, data = data)
+
+```
+We can conclude that there is a significant difference between one of  the 4 groups --> Pvalue=0.02 <5%
+But we can see that there is an interesting difference in the middle age -> Let's reduce groups to two groups (Less than 35 and more than 35Y)
+We can also see that the more than 50 years old (have no enough data)
+
+```{r}
+#2 groups ages:
+
+data$Age_Group <- ifelse(data$age<=35 , "Less 35Y", "More 35Y")
+                        
+fit_KM_Group_AGE<- survfit(Surv(stag, event) ~ Age_Group, data = data)
+summary(fit_KM_Group_AGE)
+plot(fit_KM_Group_AGE,col = 1:4, mark.time = TRUE,
+     main = "Kaplan-Meier estimator for age group",
+     ylab = "Turnover probability",
+     xlab = "time (Months)")
+legend("bottomleft", col = 1:4, lty = 1, legend = c("Less than 35", "More than 35"))
+survdiff(Surv(stag, event) ~ Age_Group, data = data)
+```
+#the pvalue = 1e-07 < 5%, there is a significant difference between the 2 ages groups (Less and more than 35Y)
+we going to keep those 2 categories ages to study the rest of data.
+
+```{r}
+#Gender Parameter KM:
+fit_KM_Gender<-  survfit(Surv(stag, event) ~ gender, data = data)
+summary(fit_KM_Gender)
+plot(fit_KM_Gender,col = 1:2, mark.time = TRUE,
+     main = "Kaplan-Meier estimator for gender group",
+     ylab = "Turnover probability",
+     xlab = "time (Months)")
+legend("bottomright", col = 1:2, lty = 1, legend = c("WOMEN", "MEN"))
+survdiff(Surv(stag, event) ~ gender, data = data)
+
+
+```
+p value = 0.1 >5% the difference between gender group is not significant = The sex of employee does not change the probability of turnover
+Let's not consider the Employees sex for the rest of study.
+
+#Manager Gender Parameter KM:
+```{r}
+fit_KM_ManagerGender<- survfit(Surv(stag, event) ~ head_gender, data = data)
+summary(fit_KM_ManagerGender)
+plot(fit_KM_ManagerGender,col = 1:2, mark.time = TRUE,
+     main = "Kaplan-Meier estimator for gender group",
+     ylab = "Turnover probability",
+     xlab = "time (Months)")
+legend("bottomright", col = 1:2, lty = 1, legend = c("WOMEN", "MEN"))
+survdiff(Surv(stag, event) ~ head_gender, data = data)
+```
+#No significant parameter (Manager gender) p=0.3 >5%
+Let's remove this parameter for the rest of study
+
+#Profession
+```{r}
+fit.KM.profession<- survfit(Surv(stag, event) ~ profession, data = data)
+summary(fit.KM.profession)
+plot(fit.KM.profession,col = 1:15, mark.time = TRUE,
+     main = "Kaplan-Meier estimator for profession group",
+     ylab = "Turnover probability",
+     xlab = "time (Months)")
+legend("bottomright", col = 1:4, lty = 1, legend = c("Finance", "Accounting","Bis","Commercial","Consult","Engineer","etc","HR","IT","LAW","Manage","Marketing","PR","Sales","Teaching"))
+survdiff(Surv(stag, event) ~ profession, data = data)
+```
+
+ p= 0.009 is sifnificant -> But not easy to study 16 professions
+ Let's try to analyse professions and find a relations 
+
+
+According to the general KM profession model + the previous distribution, I tried to select a group of 6 interesting profession 
+
+```{r}
+#Profession group 
+data$ProfessionGroup <- ifelse(data$profession == "HR" , "HR",
+                        ifelse(data$profession == "Sales", "Sales",
+                        ifelse(data$profession == "IT", "IT",
+                        ifelse(data$profession == "etc", "etc",
+                        ifelse(data$profession == "BusinessDevelopment", "BusinessDevelopment", "others")
+                              ))))
+                        
+fit.KM.ProfessionGroup<- survfit(Surv(stag, event) ~ ProfessionGroup, data = data)
+summary(fit.KM.ProfessionGroup)
+plot(fit.KM.ProfessionGroup,col = 1:6, mark.time = TRUE,
+     main = "Kaplan-Meier estimator for Profession groups3",
+     ylab = "Turnover probability",
+     xlab = "time (Months)")
+legend("bottomleft", col = 1:6, lty = 1, legend = c( "BusinessDevelopment","etc","HR", "IT","Others","Sales"))
+survdiff(Surv(stag, event) ~ ProfessionGroup, data = data)
+
+```
+
+This group have significant difference p=0.03 -> Let's check another group
+
+
+```{r}
+#Profession group 1
+data$ProfessionGroup_3j <- ifelse(data$profession == "IT" , "IT",
+                               ifelse(data$profession == "HR", "HR",
+                              ifelse(data$profession == "Commercial", "Commercial", "profession")
+                            )
+                        )
+fit.KM.ProfessionGroup_3j<- survfit(Surv(stag, event) ~ ProfessionGroup_3j, data = data)
+summary(fit.KM.ProfessionGroup_3j)
+plot(fit.KM.ProfessionGroup_3j,col = 1:4, mark.time = TRUE,
+     main = "Kaplan-Meier estimator for Profession groups 3",
+     ylab = "Turnover probability",
+     xlab = "time (Months)")
+legend("bottomleft", col = 1:4, lty = 1, legend = c("Commecial", "HR", "IT","others"))
+survdiff(Surv(stag, event) ~ ProfessionGroup_3j, data = data)
+```
+This group have p=0.008 so there at least one profession that give a difference 
+But we can see that there is no enough data for Commercial + it's close to others jobs
+But IT seems to be different from HR
+
+```{r}
+#Profession group 5j
+data$ProfessionGroup_5J <- ifelse(data$profession == "HR" , "HR",
+                        ifelse(data$profession == "IT", "IT",
+                        ifelse(data$profession == "Commercial", "Commercial",
+                        ifelse(data$profession == "Accounting", "Accounting",
+                              ifelse(data$profession == "Engineer", "Engineer", "others")))))
+                             
+                      
+fit.KM.ProfessionGroup_5J <- survfit(Surv(stag, event) ~ ProfessionGroup_5J , data = data)
+summary(fit.KM.ProfessionGroup_5J )
+plot(fit.KM.ProfessionGroup_5J ,col = 1:6, mark.time = TRUE,
+     main = "Kaplan-Meier estimator for Profession groups",
+     ylab = "Turnover probability",
+     xlab = "time (Months)")
+legend("bottomleft", col = 1:6, lty = 1, legend = c("Accounting", "Commercial","Engineer","HR","IT","Others"))
+survdiff(Surv(stag, event) ~ ProfessionGroup_5J , data = data)
+
+```
+This group have p=0.001 so there at least one profession that give a difference
+No enough data for Accounting and Engineer and Commercial
+Let's focus on HR, IT and others
+
+
+
+```{r}
+#Profession HR vs IT vs Others
+data$Profession_HR_IT_Oth <- ifelse(data$profession == "HR" , "HR",
+                        ifelse(data$profession == "IT", "IT","Others"))
+                      
+new_fit.KM.Profession_HR_IT_Oth<- survfit(Surv(stag, event) ~ Profession_HR_IT_Oth, data = data)
+summary(new_fit.KM.Profession_HR_IT_Oth)
+                        
+plot(new_fit.KM.Profession_HR_IT_Oth,col = 1:3, mark.time = TRUE,
+     main = "Kaplan-Meier estimator for Profession groups HR VS IT VS OTHERS",
+     ylab = "Staying employees probability",
+     xlab = "time (Months)")
+legend("bottomleft", col = 1:3, lty = 1, legend = c("HR","IT","Others"))
+survdiff(Surv(stag, event) ~ Profession_HR_IT_Oth, data = data)
+```
+
+
+```{r}
+#Group IT vs HR 
+
+ProfessionOnlyHRandIT <- subset(data, Profession_HR_IT_Oth == "HR" | Profession_HR_IT_Oth == "IT" )
+
+fit.KM.IT_HR<- survfit(Surv(stag, event) ~ Profession_HR_IT_Oth, data = ProfessionOnlyHRandIT)
+summary(fit.KM.IT_HR)
+                        
+plot(fit.KM.IT_HR,col = 1:3, mark.time = TRUE,
+     main = "Kaplan-Meier estimator for Profession groups IT VS HR ",
+     ylab = "Staying employees probability",
+     xlab = "time (Months)")
+legend("bottomleft", col = 1:3, lty = 1, legend = c("HR","IT","Others"))
+survdiff(Surv(stag, event) ~ Profession_HR_IT_Oth, data = ProfessionOnlyHRandIT)
+```
+
+#Extraversion --> good
+```{r}
+
+data$Extraversion_Group <- ifelse( data$extraversion < 6 , " NO Extraverted employee", "Extraverted Employee")
+
+fit.KM.Extraversion_Group <-survfit(Surv(stag, event) ~ Extraversion_Group, data = data)
+summary(fit.KM.Extraversion_Group)
+plot(fit.KM.Extraversion_Group,col = 1:2, mark.time = TRUE,
+     main = "Kaplan-Meier estimator for Extraverted employees group",
+     ylab = "Turnover probability",
+     xlab = "time (Months)")
+legend("bottomleft", col = 1:2, lty = 1, legend = c("NO Extraverted employee", "Extraverted Employee"))
+survdiff(Surv(stag, event) ~ Extraversion_Group, data = data)
+```
+The p value is 5e-04 <<5% so the Extraversion attitude have a impact on turnover employee
+
+#Independence covariate
+```{r}
+
+data$Independence_Group <- ifelse( data$independ < 4 , " NO Independent employee", "Independent Employee")
+
+fit.KM.Independence_Group <-survfit(Surv(stag, event) ~ Independence_Group, data = data)
+summary(fit.KM.Independence_Group)
+plot(fit.KM.Independence_Group,col = 1:2, mark.time = TRUE,
+     main = "Kaplan-Meier estimator for Independent employees group",
+     ylab = "Turnover probability",
+     xlab = "time (Months)")
+legend("bottomleft", col = 1:2, lty = 1, legend = c(" NO Independent employee", "Independent Employee"))
+survdiff(Surv(stag, event) ~ Independence_Group, data = data)
+```
+ The p value is 0.002 <5% so the Independence attitude have a impact on turnover employee
+ 
+ #Anxiety covariate
+```{r}
+data$Anxiety_Group <- ifelse( data$anxiety < 6 , " NO Anxious employee", "Anxious Employee")
+
+fit.KM.Anxiety_Group <-survfit(Surv(stag, event) ~ Anxiety_Group, data = data)
+summary(fit.KM.Anxiety_Group)
+plot(fit.KM.Anxiety_Group,col = 1:2, mark.time = TRUE,
+     main = "Kaplan-Meier estimator for Anxious employees group",
+     ylab = "Turnover probability",
+     xlab = "time (Months)")
+legend("bottomleft", col = 1:2, lty = 1, legend = c(" NO Anxious employee", "Anxious Employee"))
+survdiff(Surv(stag, event) ~ Anxiety_Group, data = data)
+```
+The p value is 0.006 <5% so the Anxiety attitude have a impact on turnover employee
+
+ #Selfcontrol covariate 
+```{r}
+data$Selfcontrol_Group <- ifelse( data$selfcontrol < 6 , " NO Selfcontrol employee", "Selfcontrol Employee")
+
+fit.KM.Selfcontrol_Group <-survfit(Surv(stag, event) ~ Selfcontrol_Group, data = data)
+summary(fit.KM.Selfcontrol_Group)
+plot(fit.KM.Selfcontrol_Group,col = 1:2, mark.time = TRUE,
+     main = "Kaplan-Meier estimator for Selfcontrol employees group",
+     ylab = "Turnover probability",
+     xlab = "time (Months)")
+legend("bottomleft", col = 1:2, lty = 1, legend = c("NO Selfcontrol employee", "Selfcontrol Employee"))
+survdiff(Surv(stag, event) ~ Selfcontrol_Group, data = data)
+
+```
+The p value is 0.02 <5% so the Selfcontrol attitude have a impact on turnover employee
+
+#Novation Covariates --> NOK
+```{r}
+data$Novation_Group <- ifelse( data$novator < 6 , "NO Novator employee", "Novator Employee")
+
+fit.KM.Novation_Group <-survfit(Surv(stag, event) ~ Novation_Group, data = data)
+summary(fit.KM.Novation_Group)
+plot(fit.KM.Novation_Group,col = 1:2, mark.time = TRUE,
+     main = "Kaplan-Meier estimator for Selfcontrol employees group",
+     ylab = "Turnover probability",
+     xlab = "time (Months)")
+legend("bottomleft", col = 1:2, lty = 1, legend = c("NO Novator employee", "Novator Employee"))
+survdiff(Surv(stag, event) ~ Novation_Group, data = data)
+
+```
+The p value is 0.3 >5% so the Novation attitude have NO impact on turnover employee
+
+#Transport covariates
+```{r}
+fit.KM.Transport <- survfit(Surv(stag, event) ~ way, data = data)
+                            
+summary(fit.KM.Transport)
+plot(fit.KM.Transport,col = 1:3, mark.time = TRUE,
+     main = "Kaplan-Meier estimator for transport group",
+     ylab = "Staying employees probability",
+     xlab = "time (Months)")
+legend("bottomright", col = 1:3, lty = 1, legend = c("Bus", "Car","Foot"))
+survdiff(Surv(stag, event) ~ way, data = data)
+```
+the Transport group (Bus, car and foot) have a p value of 0.003 so it's significant
+
+#Coach covariates --> NO
+```{r}
+
+fit.KM.Coach<- survfit(Surv(stag, event) ~ coach, data = data)
+summary(fit.KM.Coach)
+plot(fit.KM.Coach,col = 1:3, mark.time = TRUE,
+     main = "Kaplan-Meier estimator for Coach",
+     ylab = "Turnover probability",
+     xlab = "time (Months)")
+legend("bottomright", col = 1:3, lty = 1, legend = c("My head", "NO","Yes"))
+survdiff(Surv(stag, event) ~ coach, data = data)
+```
+The Pvalue for Coach group is 0.2>5% so no big difference between 3 groups.
+We can try to regroup The my head group with no coach 
+We can conclude that having a coach or not, does not influence the employees turnover.
+
+###Industry covariates
+```{r}
+fit.KM.Industry<- survfit(Surv(stag, event) ~ industry, data = data)
+summary(fit.KM.Industry)
+plot(fit.KM.Industry,col = 1:20, mark.time = TRUE,
+     main = "Kaplan-Meier estimator for Industry ",
+     ylab = "Turnover probability",
+     xlab = "time (Months)")
+legend("bottomright", col = 1:20, lty = 1, legend = c("Horeca", "Agri","Bank","Build","Consult","etc","IT","manufac","mining","Pharma","powermanag","realEstate","retail","state","telecom","transport"))
+survdiff(Surv(stag, event) ~ industry, data = data)
+```
+ #We can conclude thet the industry have a big impact on the employee turnover Pvalue =2e-07 <<5%
+ But need to regroup some industry to have more visible and  interpretable conclusion. 
+ 
+ 
+ According to our previous distribution, we going to create an industry group containing the 6 highest industries with turnover-> Retail, Banks, Manufacture,etc, Consult and IT.
+```{r}
+#Powerfull industries:
+data$Industry_HighT_Group <- ifelse(data$industry == "retail" , "retail",
+                        ifelse(data$industry == "Banks", "Banks",
+                        ifelse(data$industry == "manufacture", "manufacture",
+                        ifelse(data$industry == "etc", "etc",
+                        ifelse(data$industry == "Consult", "Consult",       
+                              ifelse(data$industry == "IT", "IT", "others")
+                              )
+                        ))))
+fit.KM.Industry_HighT_Group<- survfit(Surv(stag, event) ~ Industry_HighT_Group, data = data)
+summary(fit.KM.Industry_HighT_Group)
+plot(fit.KM.Industry_HighT_Group,col = 1:7, mark.time = TRUE,
+     main = "Kaplan-Meier estimator for Industry groups with high Turnover",
+     ylab = "Turnover probability",
+     xlab = "time (Months)")
+legend("bottomleft", col = 1:7, lty = 1, legend = c("Banks","Consult","etc","IT","manufacture", "Others"))
+survdiff(Surv(stag, event) ~ Industry_HighT_Group, data = data)
+```
+The pvalue = 3e-06, this industry group have a significant impact on employee's turnover.
+There is at least one industry having impact on this group! Let's find it.
+
+Let's check the extrem industry in our previous plot, 1st = Banks + consult.
+
+```{r}
+#Banks + Consult:
+
+Industry_Consult_Bank <- subset(data, data$Industry_HighT_Group == "Consult" | data$Industry_HighT_Group == "Banks" )
+new_fit.KM.Industry_Consult_Bank<- survfit(Surv(stag, event) ~ Industry_HighT_Group, data = Industry_Consult_Bank)
+summary(new_fit.KM.Industry_Consult_Bank)
+
+plot(new_fit.KM.Industry_Consult_Bank,col = 1:2, mark.time = TRUE,
+     main = "Kaplan-Meier estimator for Industry group Banks VS Consult",
+     ylab = "Staying employee probability",
+     xlab = "time (Months)")
+legend("bottomleft", col = 1:2, lty = 1, legend = c("Banks","Consult"))
+survdiff(Surv(stag, event) ~ Industry_HighT_Group, data = Industry_Consult_Bank)
+
+```
+The pvalue =0.6, so the Banks VS Consult group are not significant, we can group them together.
+
+
+#Let's do same for etc, others and manufacture
+```{r}
+# etc VS others VS manufacture:
+
+Industry_etc_manuf_oth <- subset(data, data$Industry_HighT_Group == "manufacture" | data$Industry_HighT_Group == "etc"| data$Industry_HighT_Group == "others" )
+
+new_fit.KM.Industry_etc_manuf_oth<- survfit(Surv(stag, event) ~ Industry_HighT_Group, data = Industry_etc_manuf_oth)
+summary(new_fit.KM.Industry_etc_manuf_oth)
+
+plot(new_fit.KM.Industry_etc_manuf_oth,col = 1:2, mark.time = TRUE,
+     main = "Kaplan-Meier estimator for Industry group etc VS manufacture VS others",
+     ylab = "Turnover probability",
+     xlab = "time (Months)")
+legend("bottomleft", col = 1:2, lty = 1, legend = c("etc","manufacture","others"))
+survdiff(Surv(stag, event) ~ Industry_HighT_Group, data = Industry_etc_manuf_oth)
+```
+Same us previously, this group can be grouped --> P=0.1
+
+
+#Let's recode our  powerfull industries (group categories)
+
+```{r}
+                                                         
+   Industry_Powerfull <- subset(data, data$Industry_HighT_Group == "Banks"| data$Industry_HighT_Group == "manufacture"| data$Industry_HighT_Group == "etc"| data$Industry_HighT_Group == "Consult"| data$Industry_HighT_Group == "IT"| data$Industry_HighT_Group == "others")                                                        
+
+
+Industry_Powerfull$PowerIndustry <-ifelse(Industry_Powerfull$Industry_HighT_Group =="Banks","BCA",
+                                ifelse(Industry_Powerfull$Industry_HighT_Group =="Consult","BCA",
+                                        ifelse(Industry_Powerfull$Industry_HighT_Group =="etc","MOE",
+                                               ifelse(Industry_Powerfull$Industry_HighT_Group =="manufacture","MOE",
+                                                       ifelse(Industry_Powerfull$Industry_HighT_Group =="others","MOE",
+                                                              ifelse(Industry_Powerfull$Industry_HighT_Group == "IT","IT","IT")
+                                                                  )))))
+
+new_fit.KM.Power_Industry<- survfit(Surv(stag, event) ~PowerIndustry, data =Industry_Powerfull)
+summary(new_fit.KM.Power_Industry)
+
+plot(new_fit.KM.Power_Industry,col = 1:3, mark.time = TRUE,
+     main = "Kaplan-Meier estimator for powerfull grouped Industry BCA vs MOE vs IT ",
+     ylab = "Turnover probability",
+     xlab = "time (Months)")
+legend("bottomleft", col = 1:3, lty = 1, legend = c("BCA","IT", "MOE"))
+survdiff(Surv(stag, event) ~PowerIndustry, data =Industry_Powerfull)
+
+
+```
+The p= 5e-07  is highly significant = We have a significant industry groups in our model 
+we can conclude that our group is successful. 
+BCA = Banks+Consult
+MOE= Manufacture + etc + Others
+IT= IT
+
+```{r}
+###Data cleaning according to the previous study
+Data_Clean <- data |>
+  
+    mutate ( 
+       data$coach_gender <- NULL, #Pvalue is high for coach, coach_gender,greywage,traffic and novator attitude.
+       data$coach<- NULL,
+       data$gender<- NULL,
+       data$novator<- NULL,
+       data$greywage<- NULL,
+       data$traffic<- NULL,
+       Age  = factor(age > 35, levels = c(FALSE, TRUE),
+                          labels = c("<=35", ">35")), 
+       
+       Profession = profession,
+       Time = as.numeric(stag, units="Months"),
+       Turnover = event,
+       Status = event != "0",
+       Transport = way,
+       Industry=industry,
+       Extraversion_Level = extraversion,
+       Extraversion = factor(extraversion >= 6 , levels = c(FALSE, TRUE),
+                             labels=c("Introverted", "Extraverted")),
+       Independence_Level = independ,
+       Independence = factor(independ >= 4, levels = c(FALSE, TRUE),
+                             labels = c("No independent","Independent")),
+       Selfcontrol_level = selfcontrol,
+       Selfcontrol = factor( selfcontrol >= 6 ,levels = c(FALSE, TRUE),
+                             labels=c(" NO Selfcontrol", "Selfcontrol")),
+       Anxiety_Level = anxiety,
+       Anxiety = factor(anxiety >= 6 , levels = c(FALSE, TRUE),
+                        labels= c(" NO Anxious", "Anxious")) )|>
+       
+         
+       
+select(Time, Status,Age, Transport, Independence_Level, Independence,Extraversion_Level, Extraversion, Selfcontrol_level, Selfcontrol,Anxiety_Level, Anxiety, Turnover )
+
+
+Data_Clean$Industry_HighT_Group <-ifelse(data$industry == "Banks", "Banks",
+                        ifelse(data$industry == "manufacture", "manufacture",
+                        ifelse(data$industry == "etc", "etc",
+                        ifelse(data$industry == "Consult", "Consult",       
+                              ifelse(data$industry == "IT", "IT", "others")
+                              ))))
+
+
+Data_Clean$PowerIndustry <- ifelse(Data_Clean$Industry_HighT_Group == "IT","IT",
+                                ifelse(Data_Clean$Industry_HighT_Group =="Banks","BCA",
+                                ifelse(Data_Clean$Industry_HighT_Group =="Consult","BCA",
+                                        ifelse(Data_Clean$Industry_HighT_Group =="etc","MOE",
+                                               ifelse(Data_Clean$Industry_HighT_Group =="manufacture","MOE","MOE" )))))
+                                                       
+                                                                 
+
+
+
+Data_Clean$Profession_Group <- ifelse(data$profession == "HR" , "HR",
+                        ifelse(data$profession == "IT", "IT","Others"))
+
+#Data_Final <- subset(DataC, Profession_Group == "HR" | Profession_Group == "IT" )
+
+
+```
+
+```{r}
+Data_Clean
+```
+
+
+
+#CoxPH Check------------------------------------------------------------- 
+
+#Cox~Age:
+```{r}
+fit.cph.Age <- coxph(Surv(Time, Status)~Age , data= Data_Clean)
+summary(fit.cph.Age)
+```
+ The cox model with age covariate is statistically significant for the 3 alternative tests with a pvalue <<<5%
+ For Age more than 35Y the coef(beta) =0.505 = employee >35Y have more risk to stay in the same job than employees less than 35Y
+ 
+ The hazard ration ex(beta) =1.65 = mean employees having more than 35Y increase the hazard by a factor of 1,65 to stay in their job
+ + The P of Age covariate = 1.47e-07 = Age have a significant impact on the turnover
+ 
+ 
+ 
+ 
+#Coxph Age + PowerIndustry:
+```{r}
+
+fit.cph.Age_PowerIndustry <- coxph(Surv(Time, Status) ~ Age + PowerIndustry, data = Data_Clean)
+summary(fit.cph.Age_PowerIndustry)
+
+
+```
+The 3 alternatives tests gives a significants pvalue  p=5e-12 <<<5% = The model is significant 
+The variable Age (>35) have a highly statistical significant coeff 3.06e-08 with a hazard ration of 1.71 Indicating a strong relationship between the Age (>35) and increasing the risk of staying in the same job.
+In the other way, the pvalue of Industries --> IT or MOE are also  <<< than 5% with a HR of 0.4 and 0.6 with a big Confidence interval. = these results indicate that profession (IT and MOE) makes contribution to the difference in the Hazard Ratio after adjusting for the profession values and employees age
+
+#Anxiety + Age
+```{r}
+fit.cph.Age_Anxiety <- coxph(Surv(Time, Status) ~ Age + Anxiety, data = Data_Clean)
+summary(fit.cph.Age_Anxiety)
+```
+The Anxiety employee attitude have a significant impact on turnover.
+Our model containing Age and Anxiety is significant -> with a likelihood ratio of p=6e-08 <<< 5%
++ The Pvalue of Age less than 35 years is equal to 1.35e-07 (Nothing changes, the age still have impact on the turnover) + 
+The anxiety in this model play a role in turnover -> P = 0.006
+#Selfcontrol + Age
+```{r}
+fit.cph_Selfcontrol<- coxph(Surv(Time, Status) ~ Age + Selfcontrol, data = Data_Clean)
+summary(fit.cph_Selfcontrol)
+```
+#Exraversion + Age
+```{r}
+fit.cph.Age_Extraversion <- coxph(Surv(Time, Status) ~ Age + Extraversion, data = Data_Clean)
+summary(fit.cph.Age_Extraversion)
+```
+#Independence + Age
+```{r}
+fit.cph.Age_Independence <- coxph(Surv(Time, Status) ~ Age + Independence, data = Data_Clean)
+summary(fit.cph.Age_Independence)
+```
+
+The employees Attitudes give a good significant Pvalue, that's mean that employees attitude and age have a significant impact on employee's turnover.
+
+#Transport 
+```{r}
+fit.cph.Age_Transport <-  coxph(Surv(Time, Status) ~ Age + Transport, data = Data_Clean)
+summary(fit.cph.Age_Transport)
+```
+
+
+
+According to our study, we can see that we have a high risk of turnover with employee's having less than 35Y,Anxious, extraverted; working such an IT, etc...
+
+We decide to create a column of a group of high risk and another one with low risk, with 2 variables (Age and Anxiety):
+
+Note: different combination can be done! but let's focus in chosen one:
+
+ #High risk Group and Low risk group 
+```{r}
+Data_Clean$RiskGroup_Age_Anxiety <-  ifelse( Data_Clean$Age ==  "<=35" & Data_Clean$Anxiety == "Anxious", "High Risk", "Low Risk")
+```
+ 
+```{r}
+
+count(Data_Clean, RiskGroup_Age_Anxiety )
+```
+
+
+```{r}
+
+fit.KM.RiskGroup_Age_Anxiety <- survfit(Surv(Time, Status) ~ RiskGroup_Age_Anxiety , data = Data_Clean)
+summary(fit.KM.RiskGroup_Age_Anxiety )
+plot(fit.KM.risk_group,col = 1:2, mark.time = TRUE,
+     main = "Kaplan-Meier estimator for high and low risk groups",
+     ylab = "Turnover probability",
+     xlab = "time (Months)")
+legend("bottomright", col = 1:2, lty = 1, legend = c("High risk", "Low risk"))
+survdiff(Surv(Time, Status) ~ RiskGroup_Age_Anxiety , data = Data_Clean)
+```
+ the p= 7e-05 of our Risk group is significant! we can concluse that Age and Anxiety are a importants factors in turnover employee's.
+ ####################################
+
+
+
+Let's check Another group of risk:
+High, medium and low risk, using Industries groups and Professions groups:
+For high risk we take: Profession IT and Idustry IT, Medium = Industry MOE and Profession HR and finally Low risk = BCA for industry and Others for profession.
+```{r}
+Data_Clean$RiskGroup_Profession_Industry <-  ifelse( Data_Clean$PowerIndustry ==  "IT" & Data_Clean$Profession_Group == "IT", "High Risk", 
+                                 ifelse( Data_Clean$PowerIndustry ==  "BCA" & Data_Clean$Profession_Group == "Others", "Low Risk","Medium Risk")) 
+                                          
+```
+
+```{r}
+
+count(Data_Clean, RiskGroup_Profession_Industry)
+```
+
+```{r}
+
+fit.KM.RiskGroup_Profession_Industry <- survfit(Surv(Time, Status) ~ RiskGroup_Profession_Industry , data = Data_Clean)
+summary(fit.KM.RiskGroup_Profession_Industry )
+plot(fit.KM.risk_group,col = 1:3, mark.time = TRUE,
+     main = "Kaplan-Meier estimator for high, Medium and low risk groups for Professions and industries",
+     ylab = "Turnover probability",
+     xlab = "time (Months)")
+legend("bottomright", col = 1:3, lty = 1, legend = c("High risk", "Low risk","Medium Risk"))
+survdiff(Surv(Time, Status) ~ RiskGroup_Profession_Industry , data = Data_Clean)
+```
+```{r}
+#Export Data_Clean.csv
+write.table(Data_Clean, file = "Data_Clean.csv", sep=",")
+```
+
+
+
+
+
+
+#Logistic Regression Model:
+In a linear regression model, the probability of the response variable is modeled as a linear combination of predictors and multiplicative coefficients. The encoding of the response variable (Survived) as 0 and 1 allows for a linear regression model but covariates that produce a response greater than 1 and less than 0 are considered errors and can negatively impact parameter estimation. In logistic regression, the probability of the response variable is modeled with the logistic function, or y = eX/(1+eX). Logistic regression is a classic model for binary classification.
+
+A Logistic model was done in python:
+
+
+
+
